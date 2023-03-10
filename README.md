@@ -75,9 +75,13 @@ The code, written in R, is distributed through GitHub:
 
 This product should be cited as:
 
-Torstensson A, Sundqvist L, Lindh M (2023) Phytoplankton alpha diversity in the greater Baltic Sea area. EMODNET Biology data product.
+Torstensson A, Sundqvist L, Lindh M (2023) Phytoplankton alpha diversity in the greater Baltic Sea area. Data product created under the European Marine Observation Data Network (EMODnet) Biology Phase IV
 
 Available to download in:
+
+[Integrated Marine Information System (IMIS)](https://www.vliz.be/imis?dasid=8221)
+
+and as zip:
 
 [Link to zip](/../../archive/refs/heads/main.zip)
 
