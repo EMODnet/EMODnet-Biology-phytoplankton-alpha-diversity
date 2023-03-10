@@ -1,0 +1,75 @@
+# Phytoplankton alpha diversity in the greater Baltic Sea area
+
+## Introduction
+
+Biodiversity loss due to human activities is an increasing threat for marine ecosystems and the services we obtain for them, which makes ecosystem monitoring a vital task for areas subjected to conservation goals. Environmental factors often control the community composition and diversity, such as the pronounced salinity gradient in the Baltic Sea (e.g. Hu et al. 2016). As many diversity indices are biased by sampling effort, caution must be taken when intepreting the results from microscopy counts. By rarefaction and evenness estimation, these biases can be reduced, but not ignored.
+
+## Directory structure
+
+```
+EMODnet-Biology-phytoplankton-alpha-diversity/
+├── analysis
+├── data/
+│   ├── derived_data/
+│   ├── raw_data/
+│   └── derived_data/
+├── docs/
+├── product/
+│   ├── animations/
+│   ├── maps/
+│   │   ├── richness/
+│   │   └── shannon/
+│   └── plots/
+│       └── gamma/
+└── scripts/
+```
+
+* **analysis** - Markdown or Jupyter notebooks
+* **data** - Raw and derived data
+* **docs** - Rendered reports
+* **product** - Output product files
+* **scripts** - Reusable code
+
+## Data series
+
+The raw data was accessed from GBIF, https://www.gbif.se/ipt/archive.do?r=smhi-phytoplankton-nat&v=1.8
+
+```
+http://geo.vliz.be/geoserver/Dataportal/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=Dataportal:eurobis-obisenv_basic&&viewParams=where:datasetid=4659&maxFeatures=50&outputformat=csv
+```
+
+## Data product
+
+![](alpha-diversity.gif)
+We developed this product to asssess how phytoplankton alpha diversity change over time in the Baltic sea region. Abundance data from the Swedish national phytoplankton monitoring are downloaded from [GBIF](https://www.gbif.org/) (data originating from [SHARKweb](https://sharkweb.smhi.se/)). Currently, only Swedish data are included as abundance is required for the calculations, and only between the time period of 2000-2022, as the sampling effort was more consistent during this time period (especially 2007-2022). Samples are rarified and Shannon diversity index and species richness (n taxa) are calculated for each monthly sample, and spatial data points are clustered together. Rarified monthly gamma diversity values are also calculated for the entire region. Maps with monthly alpha diversity values are produced using [EMODnetBiologyMaps](https://github.com/EMODnet/EMODnetBiologyMaps) R package (Fernández Bejarano & Schepers, 2020), and animated over time. Alpha diversity data are exported as NetCDF following Fernández-Bejarano (2022). 
+
+## More information:
+
+### References
+
+Fernández-Bejarano, S (2022). Create a EMODnet-Biology data product as NetCDF. Consulted online at https://github.com/EMODnet/EMODnet-Biology-products-erddap-demo on 2023-03-03.
+
+Fernández Bejarano S, Schepers L (2020). _EMODnetBiologyMaps: Creates ggplot maps with the style of EMODnet_. R package version 0.0.1.0. Integrated data products
+created under the European Marine Observation Data Network (EMODnet) Biology project (EASME/EMFF/2017/1.3.1.2/02/SI2.789013), funded by the by the European Union under
+Regulation (EU) No 508/2014 of the European Parliament and of the Council of 15 May 2014 on the European Maritime and Fisheries Fund, <URL:
+https://github.com/EMODnet/EMODnetBiologyMaps>.
+
+Hu YO, Karlson B, Charvet S, Andersson AF. Diversity of Pico- to Mesoplankton along the 2000 km Salinity Gradient of the Baltic Sea. Front Microbiol. 2016 May 12;7:679. doi: 10.3389/fmicb.2016.00679.
+
+### Code and methodology
+
+~/link/to/code.git
+
+### Citation and download link
+
+This product should be cited as:
+
+Torstensson A, Sundqvist L, Lindh M (2023) Phytoplankton alpha diversity in the greater Baltic Sea area. EMODNET Biology data product.
+
+Available to download in:
+
+~/link/to/download/product.zip
+
+### Authors
+
+Anders Torstensson, Lisa Sundqvist, Markus Lindh

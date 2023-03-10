@@ -1,0 +1,651 @@
+---
+title: "01-EMODnet-Biology-phytoplankton-alpha-diversity"
+author: "Anders Torstensson, Lisa Sundqvist and Markus Lindh"
+date: '2023-03-02'
+params:
+  year_wanted: !r seq(2000, 2022)
+knit: (function(inputFile, encoding) {
+                        rmarkdown::render(inputFile,
+                        encoding=encoding, 
+                        output_file="../docs/01_netcdf.html") })
+---
+
+This R markdown downloads Swedish national phytoplankton monitoring data from GBIF (originating from SHARKweb, https://sharkweb.smhi.se/). Data can also be downloaded from Eurobis, see chunk "r read_data". The script then wrangles data, cluster spatial data points together, rarefy samples and calculates Shannon diversity index and species richness (n taxa) for each sample. Monthly gamma diversity values are also calculated for the whole region. Alpha diversity data are stored in SpatialPointsDataFrame, which is later for the production of maps and animations. Alpha diveristy data are stored in NetCDF format following Fernández-Bejarano (2022). 
+
+References
+
+Fernández-Bejarano, S (2022) Create a EMODnet-Biology data product as NetCDF. Consulted online at https://github.com/EMODnet/EMODnet-Biology-products-erddap-demo on 2023-03-03.
+
+```{r setup, echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(finch)
+library(tidyverse)
+library(lubridate)
+library(vegan)
+library(sp)
+library(geosphere)
+library(RNetCDF)
+library(glue)
+
+downloadDir = "../data/raw_data"
+derivedDir = "../data/derived_data"
+plotsDir = "../product/plots"
+
+proWG = CRS("+proj=longlat +datum=WGS84")
+```
+
+## Download data from GBIF/Eurobis
+
+GBIF (https://www.gbif.org/) currently has the most recent version of the dataset (as of 2023-03-02). Additional datasets may be used, but the alpha diversity calculations require abundance data.
+
+```{r read_data, echo=FALSE}
+
+# eurobis_url = "https://ipt.vliz.be/eurobis/archive.do?r=smhi-phytoplankton-nat&v=1.0"
+# 
+# download.file(eurobis_url, file.path(downloadDir, "dwca-smhi-phytoplankton-nat.zip"), mode="wb")
+# 
+# eurobis_dwca = dwca_read(file.path(downloadDir, "dwca-smhi-phytoplankton-nat.zip"), read = TRUE, encoding = 'UTF-8')
+
+## GBIF currently has the most recent version of the dataset (as of 2023-03-02)
+
+gbif_url = "https://www.gbif.se/ipt/archive.do?r=smhi-phytoplankton-nat"
+
+download.file(gbif_url, file.path(downloadDir, "dwca-smhi-phytoplankton-nat.zip"), mode="wb")
+
+gbif_dwca = dwca_read(file.path(downloadDir, "dwca-smhi-phytoplankton-nat.zip"), read = TRUE, encoding = 'UTF-8')
+```
+
+## Data wrangling
+
+Combine the occurrence, emof and event tables together, filter and select the required data. Only surface samples are used (min depth == 0). Selected years can be edited under params$years_wanted.
+
+```{r data_wrangling, echo=FALSE}
+# Combine the dwca files into a single dataframe
+
+shark_data_all = gbif_dwca$data$extendedmeasurementorfact.txt %>%
+  filter(measurementType == "Abundance") %>%
+  right_join(gbif_dwca$data$occurrence.txt) %>%
+  filter(!is.na(measurementValue)) %>%
+  dplyr::select(id,
+         occurrenceID,
+         measurementValue,
+         measurementUnit,
+         eventID,
+         scientificName) %>%
+  left_join(gbif_dwca$data$event.txt) %>%
+    dplyr::select(id,
+         occurrenceID,
+         measurementValue,
+         eventID,
+         parentEventID,
+         scientificName,
+         eventDate,
+         verbatimLocality,
+         minimumDepthInMeters,
+         maximumDepthInMeters,
+         decimalLatitude,
+         decimalLongitude) %>%
+  mutate("year" = year(eventDate),
+         "month" = month(eventDate),
+         "day" = day(eventDate))
+
+# Select surface water samples, and years, and wrangle data
+
+data_all = shark_data_all %>%
+  filter(minimumDepthInMeters == 0) %>%
+  filter(year %in% params$year_wanted) %>%
+  dplyr::select(year,
+                month,
+                # eventID,
+                # parentEventID,
+                eventDate,
+                verbatimLocality,
+                decimalLatitude,
+                decimalLongitude,
+                scientificName,
+                measurementValue) %>%
+  mutate(eventDate = as.Date(eventDate),
+         positionDate = paste(decimalLatitude,
+                               decimalLongitude,
+                               eventDate,
+                               sep = "_"),
+         measurementValue = as.double(measurementValue),
+         origin = "SHARK") %>%
+  arrange(eventDate) %>%
+  mutate("monthYear" = paste(month.abb[month], year, sep = "-")) %>%
+  group_by(positionDate, scientificName) %>%
+  mutate(measurementValue = sum(measurementValue)) %>%
+  ungroup() %>%
+  distinct()
+```
+
+## Cluster spatial datapoints
+
+Spatial datapoints are clustered together ("station clusters") based on a minimum distance (d), in order to have a fixed position for each sampling station.
+
+```{r cluster_stations, echo=FALSE}
+cooridinates = data_all %>%
+  dplyr::select(decimalLongitude, decimalLatitude) %>%
+  distinct()
+
+xy = SpatialPointsDataFrame(
+    matrix(c(cooridinates$decimalLongitude,
+           cooridinates$decimalLatitude), 
+         ncol = 2), 
+  data.frame(ID = seq(1:nrow(cooridinates))),
+  proj4string = proWG)
+
+mdist = distm(xy)
+
+hc = hclust(as.dist(mdist), method = "complete")
+
+# Define the maximum distance for clustering stations together
+
+d = 20000
+
+xy$clust = cutree(hc, h = d)
+
+cooridinates = cooridinates %>%
+  mutate("stationCluster" = xy$clust)
+
+data_all = data_all %>%
+  left_join(cooridinates, by = c("decimalLongitude", "decimalLatitude"))
+```
+
+## Rarefy and calculate alpha diversity
+
+Data are rarefied to account for uneven sampling effort. Shannon diversity index and species richness (n taxa) are calculated for each sample.
+
+```{r alpha_diversity, echo=FALSE}
+# Transform data into community matrix and rarefy
+
+data_pivot <- data_all %>%
+  dplyr::select(positionDate, scientificName, measurementValue) %>%
+  mutate(measurementValue = round(measurementValue, 0)) %>%
+  group_by(positionDate) %>%
+  distinct() %>%
+  pivot_wider(names_from="scientificName", 
+              values_from="measurementValue", 
+              values_fill = 0) %>%
+  as.data.frame() 
+
+rownames(data_pivot) <- data_pivot$positionDate
+data_pivot <- data_pivot[,-1]
+
+data_pivot = data_pivot %>%
+  filter(rowSums(.) > 10000)
+
+m = min(rowSums(data_pivot))
+
+data_rarefied <- rrarefy(as.matrix(data_pivot), m) 
+
+# Only select successful rarefications
+
+data_rarefied = data_rarefied[rowSums(data_rarefied) == m,]
+data_rarefied = data_rarefied[!is.na(rowSums(data_rarefied)),]
+
+data_rarefied = data_rarefied %>%
+  as_tibble(rownames="positionDate") %>%
+  pivot_longer(-positionDate) %>%
+  dplyr::rename("measurementValue" = value,
+                "scientificName" = name) %>%
+  filter(measurementValue > 0)
+
+data_all_rarefied = data_all %>%
+  dplyr::select(-scientificName, -measurementValue) %>%
+  distinct() %>%
+  right_join(data_rarefied)
+
+# Calculate alpha diversity
+
+unique_taxa = data_all_rarefied %>%
+  group_by(positionDate) %>%
+  summarise(uniqueTaxa = length(unique(scientificName)),
+            shannon = diversity(measurementValue)) 
+
+unique_taxa = data_all_rarefied %>%
+  dplyr::select(-scientificName) %>%
+  distinct(decimalLatitude,
+           decimalLongitude,
+           eventDate, 
+           .keep_all = TRUE) %>%
+  left_join(unique_taxa)
+```
+
+## Rarefy and calculate gamma diversity
+
+Gamma diversity is calculated for each month of the whole region and stored in a dataframe. Gamma diversity is plotted vs sampling effort for evaluation of bias in biodiversity.
+
+The dataframe object is stored in ../data/derived_data
+
+Plots are stored in:
+../product/plots/shannon_vs_samples_size.png
+../product/plots/richness_vs_samples_size.png
+
+```{r gamma_diversity, echo=FALSE}
+# Transform data into community matrix and rarefy
+
+data_pivot_gamma <- data_all %>%
+  dplyr::select(monthYear, scientificName, measurementValue) %>%
+  mutate(measurementValue = round(measurementValue, 0)) %>%
+  group_by(monthYear, scientificName) %>%
+  mutate(measurementValue = sum(measurementValue)) %>%
+  ungroup() %>%
+  group_by(monthYear) %>%
+  distinct() %>%
+  pivot_wider(names_from="scientificName", values_from="measurementValue", values_fill = 0) %>%
+  as.data.frame() 
+
+rownames(data_pivot_gamma) <- data_pivot_gamma$monthYear
+data_pivot_gamma <- data_pivot_gamma[,-1]
+
+m_gamma = min(rowSums(data_pivot_gamma))
+
+data_gamma_rarefied <- rrarefy(as.matrix(data_pivot_gamma), m_gamma) 
+
+# Only select successful rarifications
+
+data_gamma_rarefied = data_gamma_rarefied[rowSums(data_gamma_rarefied) == m_gamma,]
+data_gamma_rarefied = data_gamma_rarefied[!is.na(rowSums(data_gamma_rarefied)),]
+
+data_gamma_rarefied = data_gamma_rarefied %>%
+  as_tibble(rownames="monthYear") %>%
+  pivot_longer(-monthYear) %>%
+  dplyr::rename("measurementValue" = value,
+                "scientificName" = name) %>%
+  filter(measurementValue > 0)
+
+data_all_gamma_rarefied = data_all %>%
+  dplyr::select(-scientificName, -measurementValue) %>%
+  distinct() %>%
+  right_join(data_gamma_rarefied)
+
+# Calculate gamma diversity
+
+gamma_diversity = data_all_gamma_rarefied %>%
+  group_by(monthYear) %>%
+  summarise(uniqueTaxa = length(unique(scientificName)),
+            shannon = diversity(measurementValue),
+            n = length(unique(positionDate)),
+            year = unique(year)) %>%
+  mutate("month" = as.integer(match(str_sub(monthYear, 1,3), month.abb))) %>%
+  mutate("date" = as.Date(paste(year,month, "15", sep="-"))) %>%
+  mutate("daycount" = as.integer(as.Date(date))) %>%
+  arrange(date)
+
+# Save for later
+
+save(gamma_diversity, file = file.path(derivedDir, "gamma_diversity.Rda"))
+
+# Plot gamma diversity vs sampling effort
+
+shannon_sample_size.p = ggplot(gamma_diversity, aes(x = n, y = shannon)) + 
+  geom_point() +
+  theme_classic() +
+  xlab("Sample size (n)") +
+  ylab("Shannon index") +
+  ggtitle("Gamma diversity vs sampling effort")
+
+richness_sample_size.p = ggplot(gamma_diversity, aes(x = n, y = uniqueTaxa)) + 
+  geom_point() +
+  theme_classic() +
+  xlab("Sample size (n)") +
+  ylab("Unique taxa")+
+  ggtitle("Gamma richness vs sampling effort")
+
+shannon_sample_size.p
+richness_sample_size.p
+
+# Save plots
+ggsave(file.path(plotsDir, "shannon_vs_samples_size.png"), plot = shannon_sample_size.p)
+ggsave(file.path(plotsDir, "richness_vs_samples_size.png"), plot = richness_sample_size.p)
+```
+
+## Create and wrangle SPDF
+
+The SpatialPointsDataFrame is used later for producing maps and animations
+
+The spdf object is stored in ../data/derived_data
+
+```{r spdf, echo=FALSE}
+spdf_data = unique_taxa %>%
+  dplyr::select(decimalLongitude, 
+                decimalLatitude, 
+                verbatimLocality,
+                uniqueTaxa,
+                shannon,
+                monthYear,
+                eventDate,
+                stationCluster) %>%
+  mutate(monthYear = factor(monthYear),
+         monthYear = fct_reorder(monthYear, eventDate))
+
+# Calculate the mid-point of the station cluster, when spatially distributed datapoints are present within a cluster
+
+spdf_coordinates = spdf_data %>%
+  group_by(stationCluster) %>%
+  summarise(decimalLongitude = mean(decimalLongitude),
+            decimalLatitude = mean(decimalLatitude))
+
+# Use the most common name for that station cluster
+
+station_names = spdf_data %>%
+  dplyr::select(verbatimLocality,
+         stationCluster) %>%
+  group_by(stationCluster) %>%
+  summarise(verbatimLocality = names(table(verbatimLocality))[which.max(table(verbatimLocality))])
+
+# Add station names and coordinates
+
+spdf_data = spdf_data %>%
+  group_by(monthYear, stationCluster) %>%
+  summarise(uniqueTaxa = mean(uniqueTaxa),
+            shannon = mean(shannon)) %>%
+  left_join(spdf_coordinates) %>%
+  left_join(station_names)
+
+# Calculate monthly means for each station cluster
+
+spdf_data_monthly = spdf_data %>%
+  filter(!is.na(monthYear)) %>%
+  group_by(monthYear, stationCluster) %>%
+  summarise(uniqueTaxa = mean(uniqueTaxa),
+            shannon = mean(shannon),
+            decimalLongitude  = unique(decimalLongitude),
+            decimalLatitude = unique(decimalLatitude)) %>%
+  mutate("month" = as.integer(match(str_sub(monthYear, 1,3), month.abb))) %>%
+  mutate("year" = as.integer(str_sub(monthYear, 5,8))) %>%
+  mutate("eventDate" = as.Date(paste(year, month(month),"15",sep="-"))) %>%
+  ungroup() %>%
+  mutate("daycount" = as.integer(as.Date(eventDate)))%>%
+  left_join(station_names)
+
+# Save for later
+
+save(spdf_data_monthly, file = file.path(derivedDir, "spdf_data_monthly.Rda"))
+
+```
+
+## Create NetCDF
+
+Following Fernández-Bejarano (2022).
+
+```{r netcdf, echo=FALSE}
+# Transform date to temporal amounts
+
+spdf_data_monthly$time = utinvcal.nc(
+  unitstring = "days since 1970-01-01 00:00:00" , 
+  value = as.POSIXct(spdf_data_monthly$eventDate, tz = "UTC")
+)
+
+# Add an unique identifier by the combination of: 
+# decimaLongitude, decimalLatitude, eventDate and stationCluster
+
+dataset <- spdf_data_monthly %>%
+  mutate(
+    id = glue("{decimalLongitude}-{decimalLatitude}-{time}-{stationCluster}")
+  )
+
+# Extract the unique and sorted values of the 4 dimensions
+lon = sort(unique(dataset$decimalLongitude))
+lat = sort(unique(dataset$decimalLatitude))
+time = sort(unique(dataset$time))
+
+# Station will be put in a new data frame
+station <- tibble(
+  stationCluster = dataset$stationCluster,
+  verbatimLocality = dataset$verbatimLocality,) %>% 
+  distinct() %>%
+  arrange(stationCluster)
+
+# Use expand.grid() to create a data frame with all the possible 
+# combinations of the 4 dimensions
+longer <- expand.grid(lon = lon, lat = lat, time = time, 
+                     stationCluster = station$stationCluster, 
+                     stringsAsFactors = FALSE)
+
+# Define unique identifier again and merge the variables shannon index and species richness
+
+dataset_shannon <- dataset %>%
+  dplyr::select(id, shannon)
+
+dataset_richness <- dataset %>%
+  dplyr::select(id, uniqueTaxa)
+
+longer_shannon <- longer %>% 
+  mutate(
+    id = glue("{lon}-{lat}-{time}-{stationCluster}")
+  ) %>%
+  left_join(dataset_shannon) %>%
+  dplyr::select(-id)
+
+# Save for later
+
+write_csv(longer_shannon, file.path(derivedDir, "longer_shannon.csv"))
+
+longer_richness <- longer %>% 
+  mutate(
+    id = glue("{lon}-{lat}-{time}-{stationCluster}")
+  ) %>%
+  left_join(dataset_richness) %>%
+  dplyr::select(-id)
+
+# Save for later
+
+write_csv(longer_richness, file.path(derivedDir, "longer_richness.csv"))
+
+
+
+
+# Create 4D arrays
+shannon_array <- array(
+  data = longer_shannon$shannon,
+  dim = c(length(unique(spdf_data_monthly$decimalLongitude)),
+          length(unique(spdf_data_monthly$decimalLatitude)),
+          length(unique(spdf_data_monthly$time)),
+          length(unique(spdf_data_monthly$stationCluster)))
+)
+
+richness_array <- array(
+  data = longer_richness$uniqueTaxa,
+  dim = c(length(unique(spdf_data_monthly$decimalLongitude)),
+          length(unique(spdf_data_monthly$decimalLatitude)),
+          length(unique(spdf_data_monthly$time)),
+          length(unique(spdf_data_monthly$stationCluster)))
+)
+
+# Create nc file
+nc <- create.nc(file.path(derivedDir,"alpha_diversity.nc")) 
+```
+
+## Define dimensions of the NetCDF
+
+```{r define_dimensions, echo=FALSE}
+
+### Longitude
+
+# Define lon dimension
+dim.def.nc(nc, dimname = "lon", dimlength = length(lon)) 
+
+# Define lon variable
+var.def.nc(nc, varname = "lon", vartype = "NC_DOUBLE", dimensions = "lon")
+
+# Add attributes
+att.put.nc(nc, variable = "lon", name = "units", type = "NC_CHAR", value = "degrees_east")
+att.put.nc(nc, variable = "lon", name = "standard_name", type = "NC_CHAR", value = "longitude")
+att.put.nc(nc, variable = "lon", name = "long_name", type = "NC_CHAR", value = "Longitude")
+
+# Put data
+var.put.nc(nc, variable = "lon", data = lon) 
+
+# Check
+paste("longitude")
+var.get.nc(nc, variable = "lon")
+
+
+
+
+### Latitude
+
+# Define lat dimension
+dim.def.nc(nc, dimname = "lat", dimlength = length(lat)) 
+
+# Define lat variable
+var.def.nc(nc, varname = "lat", vartype = "NC_DOUBLE", dimensions = "lat")
+
+# Add attributes
+att.put.nc(nc, variable = "lat", name = "units", type = "NC_CHAR", value = "degrees_north")
+att.put.nc(nc, variable = "lat", name = "standard_name", type = "NC_CHAR", value = "latitude")
+att.put.nc(nc, variable = "lat", name = "long_name", type = "NC_CHAR", value = "Latitude")
+
+# Put data
+var.put.nc(nc, variable = "lat", data = lat) 
+
+# Check
+paste("latitudes")
+var.get.nc(nc, variable = "lat")
+
+
+
+
+### Time
+
+# Define time dimension
+dim.def.nc(nc, dimname = "time", dimlength = length(time)) 
+
+# Define time variable
+var.def.nc(nc, varname = "time", vartype = "NC_DOUBLE", dimensions = "time")
+
+# Add attributes
+att.put.nc(nc, variable = "time", name = "standard_name", type = "NC_CHAR", value = "time")
+att.put.nc(nc, variable = "time", name = "long_name", type = "NC_CHAR", value = "Time")
+att.put.nc(nc, variable = "time", name = "units", type = "NC_CHAR", value = "days since 1970-01-01 00:00:00")
+att.put.nc(nc, variable = "time", name = "calendar", type = "NC_CHAR", value = "gregorian")
+
+# Put data
+var.put.nc(nc, variable = "time", data = time)
+
+# Check
+paste("timepoints")
+var.get.nc(nc, variable = "time")
+
+
+
+
+
+### Station
+
+# Define the station cluster and string80 dimensions
+dim.def.nc(nc, dimname = "stationCluster", dimlength = nrow(station))
+dim.def.nc(nc, dimname = "string80", dimlength = 80)
+
+# Add station cluster variable and attributes 
+var.def.nc(nc, varname = "stationCluster", vartype = "NC_INT", dimensions = "stationCluster")
+att.put.nc(nc, variable = "stationCluster", name = "long_name", type = "NC_CHAR", value = "Station Cluster")
+
+# Put station cluster data
+var.put.nc(nc, variable = "stationCluster", data = station$stationCluster)
+
+# Check
+paste("station clusters")
+var.get.nc(nc, variable = "stationCluster")
+
+
+# Add station cluster name variable and attributes
+var.def.nc(nc, varname = "verbatimLocality", vartype = "NC_CHAR", dimension = c("string80", "stationCluster"))
+att.put.nc(nc, variable = "verbatimLocality", name = "standard_name", type = "NC_CHAR", value = "station_cluster_name")
+att.put.nc(nc, variable = "verbatimLocality", name = "long_name", type = "NC_CHAR", value = "Station cluster name")
+
+# Put station cluster name data
+var.put.nc(nc, variable = "verbatimLocality", data = station$verbatimLocality)
+
+# Check
+paste("station cluster names")
+var.get.nc(nc, variable = "verbatimLocality")
+
+
+
+### Define non-dimensional crs variable 
+var.def.nc(nc, varname = "crs", vartype = "NC_CHAR", dimensions = NA)
+
+# Add attributes
+att.put.nc(nc, variable = "crs", name = "long_name", type = "NC_CHAR", value = "Coordinate Reference System")
+att.put.nc(nc, variable = "crs", name = "geographic_crs_name", type = "NC_CHAR", value = "WGS 84")
+att.put.nc(nc, variable = "crs", name = "grid_mapping_name", type = "NC_CHAR", value = "latitude_longitude")
+att.put.nc(nc, variable = "crs", name = "reference_ellipsoid_name", type = "NC_CHAR", value = "WGS 84")
+att.put.nc(nc, variable = "crs", name = "horizontal_datum_name", type = "NC_CHAR", value = "WGS 84")
+att.put.nc(nc, variable = "crs", name = "prime_meridian_name", type = "NC_CHAR", value = "Greenwich")
+att.put.nc(nc, variable = "crs", name = "longitude_of_prime_meridian", type = "NC_DOUBLE", value = 0.)
+att.put.nc(nc, variable = "crs", name = "semi_major_axis", type = "NC_DOUBLE", value = 6378137.)
+att.put.nc(nc, variable = "crs", name = "semi_minor_axis", type = "NC_DOUBLE", value = 6356752.314245179)
+att.put.nc(nc, variable = "crs", name = "inverse_flattening", type = "NC_DOUBLE", value = 298.257223563)
+att.put.nc(nc, variable = "crs", name = "spatial_ref", type = "NC_CHAR", value = 'GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Latitude\",NORTH],AXIS[\"Longitude\",EAST],AUTHORITY[\"EPSG\",\"4326\"]]')
+att.put.nc(nc, variable = "crs", name = "GeoTransform", type = "NC_CHAR", value = '-180 0.08333333333333333 0 90 0 -0.08333333333333333 ')
+```
+
+## Define variables and store the NC file
+
+The .nc file is stored in ../data/derived_data
+
+```{r define_variables, echo=FALSE}
+# Create the shannon variable defined by the four dimensions
+var.def.nc(nc, varname = "shannon", vartype = "NC_DOUBLE", dimensions = c("lon", "lat", "time", "stationCluster"))
+
+# Add attributes
+att.put.nc(nc, variable = "shannon", name = "_FillValue", type = "NC_DOUBLE", value = -99999)
+att.put.nc(nc, variable = "shannon", name = "long_name", type = "NC_CHAR", value = "Shannon index")
+
+
+# Add data from a 4D array
+var.put.nc(nc, variable = "shannon", data = shannon_array) 
+
+# Add data from a vector: All at once
+var.put.nc(nc, variable = "shannon", 
+           data = longer_shannon$shannon, 
+           start = c(1, 1, 1, 1), 
+           count = c(length(unique(spdf_data_monthly$decimalLongitude)),
+                     length(unique(spdf_data_monthly$decimalLatitude)),
+                     length(unique(spdf_data_monthly$time)),
+                     length(unique(spdf_data_monthly$stationCluster)))) 
+
+
+
+
+# Create the richness variable defined by the four dimensions
+var.def.nc(nc, varname = "richness", vartype = "NC_INT", dimensions = c("lon", "lat", "time", "stationCluster"))
+
+# Add attributes
+att.put.nc(nc, variable = "richness", name = "_FillValue", type = "NC_INT", value = -99999)
+att.put.nc(nc, variable = "richness", name = "long_name", type = "NC_CHAR", value = "Species richness (n taxa)")
+
+
+# Add data from a 4D array
+var.put.nc(nc, variable = "richness", data = richness_array) 
+
+# Add data from a vector: All at once
+var.put.nc(nc, variable = "richness", 
+           data = longer_richness$uniqueTaxa, 
+           start = c(1, 1, 1, 1), 
+           count = c(length(unique(spdf_data_monthly$decimalLongitude)),
+                     length(unique(spdf_data_monthly$decimalLatitude)),
+                     length(unique(spdf_data_monthly$time)),
+                     length(unique(spdf_data_monthly$stationCluster)))) 
+
+
+
+
+close.nc(nc)
+
+paste0("NetCDF data containing shannon index and species richness (n taxa) has been stored in ", derivedDir ,"/alpha_diversity.nc")
+```
+
+### Reproducibility
+
+```{r reproducibility}
+# Date time
+Sys.time()
+# Here we store the session info for this script
+sessioninfo::session_info()
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -1,0 +1,366 @@
+---
+title: "03-EMODnet-Biology-phytoplankton-alpha-diversity"
+author: "Anders Torstensson, Lisa Sundqvist and Markus Lindh"
+date: '2023-03-02'
+params:
+  fps: 5 # Define framerate
+  width: 1280 # Output width in px
+  res: 200 # Output resolution in dpi
+  detail: 1 # Output detail
+  frame_interpolations: 4
+knit: (function(inputFile, encoding) {
+                        rmarkdown::render(inputFile,
+                        encoding=encoding, 
+                        output_file="../docs/03_animations.html") })
+---
+
+This R markdown produces animations (in GIF and MP4) of phytoplankton alpha and gamma diversity over time for the station clusters defined in 01_phytoplankton_alpha_diversity_netcdf.Rmd. Please note that the high-res rendering of animations are memory intense, and may require enough RAM for multimedia creations (the machine used for writing this script used 32 GB). The frame-resolution may be adjusted under params, if necessary.
+
+```{r setup, echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(plyr)
+library(tidyverse)
+library(lubridate)
+library(EMODnetBiologyMaps)
+library(viridis)
+library(geosphere)
+library(gganimate)
+library(magick)
+library(gifski)
+library(av)
+
+derivedDir = "../data/derived_data"
+animationsDir = "../product/animations"
+```
+
+## Load previous objects
+
+Objects produced in 01_phytoplankton_alpha_diversity_netcdf.Rmd
+
+```{r load_objects, echo=FALSE}
+load(file.path(derivedDir, "spdf_data_monthly.Rda"))
+load(file.path(derivedDir, "gamma_diversity.Rda"))
+```
+
+## Production of richness maps
+
+Map animation of changes in monthly species richness (n taxa) over time, exported as GIF.
+
+Exported as ../product/animations/animation_richness.gif
+
+```{r produce_maps_richness, message=FALSE, results=FALSE, echo=FALSE}
+start_time = Sys.time()
+
+animated_map = emodnet_map_basic(crs = 4326, 
+                                 xlim = c(10, 29),
+                                 ylim = c(54, 66)
+                                 ) +
+  geom_point(data = spdf_data_monthly, 
+             aes(x = decimalLongitude, y = decimalLatitude, group = as.factor(stationCluster), 
+                 color = uniqueTaxa, 
+                 size = uniqueTaxa)) +
+  transition_time(as.integer(daycount)) +
+  xlab("") +
+  ylab("") +
+  scale_color_viridis("Unique taxa",
+                      option="plasma",
+                      limits = c(min(spdf_data_monthly$uniqueTaxa, na.rm = TRUE),
+                                 max(spdf_data_monthly$uniqueTaxa, na.rm = TRUE)),
+                      breaks = seq(5,
+                                   max(spdf_data_monthly$uniqueTaxa, na.rm = TRUE),
+                                   by = 10)) +
+  scale_size_continuous("Unique taxa",
+                        limits = c(min(spdf_data_monthly$uniqueTaxa, na.rm = TRUE),
+                                   max(spdf_data_monthly$uniqueTaxa, na.rm = TRUE)),
+                        breaks = seq(5,
+                                     max(spdf_data_monthly$uniqueTaxa, na.rm = TRUE),
+                                     by = 10)) +
+  guides(color = guide_legend(), size = guide_legend()) +
+  labs(title = "Phytoplankton species richness",
+       subtitle = '{format(as_date(frame_time), "%Y-%m")}')
+
+animated_richness = animate(
+      plot = animated_map, 
+      renderer = gifski_renderer(),
+      nframes = length(unique(spdf_data_monthly$monthYear))*params$frame_interpolations,
+      width = params$width, height = params$width*0.8, units = "px",
+      res = params$res,
+      fps = params$fps,
+      detail = params$detail,
+      end_pause = params$fps*10)
+
+main_gif = image_read(animated_richness)
+
+logo = "logo_col_no_bg.png"
+logo = system.file("extdata", logo, package = "EMODnetBiologyMaps", mustWork = TRUE)
+logo = image_read(logo)
+logo = image_scale(logo, paste(0.09375*params$width))
+
+plot_logo_richness = image_composite(main_gif, logo, gravity = "southeast", offset = paste0("+",round(0.2890625*params$width),"+",round(0.08789062*0.8*params$width)))
+
+image_write(plot_logo_richness, file.path(animationsDir, "animation_richness.gif"))
+
+gc() # Not pretty, but speeds up rendering
+```
+
+```{r elapsed_time_1, echo=FALSE}
+end_time = Sys.time()
+end_time - start_time
+```
+
+## Production of shannon maps
+
+Map animation of changes in monthly alpha diversity (Shannon diversity index) over time, exported as GIF.
+
+Exported as ../product/animations/animation_shannon.gif
+
+```{r produce_maps_shannon, message=FALSE, results=FALSE, echo=FALSE}
+start_time = Sys.time()
+
+animated_map_shannon = emodnet_map_basic(crs = 4326, 
+                                         xlim = c(10, 29),
+                                         ylim = c(54, 66)
+                                         ) +
+  geom_point(data = spdf_data_monthly, 
+             aes(x = decimalLongitude, y = decimalLatitude, group = as.factor(stationCluster), 
+                 color = shannon, 
+                 size = shannon)) +
+  transition_time(daycount) +
+  xlab("") +
+  ylab("") +
+  scale_color_viridis("Shannon index",
+                      option="viridis",
+                      limits = c(min(spdf_data_monthly$shannon, na.rm = TRUE),
+                                 max(spdf_data_monthly$shannon, na.rm = TRUE)),
+                      breaks = seq(.5,
+                                   max(spdf_data_monthly$shannon, na.rm = TRUE),
+                                   by = 0.25)) +
+  scale_size_continuous("Shannon index",
+                        limits = c(min(spdf_data_monthly$shannon, na.rm = TRUE),
+                                   max(spdf_data_monthly$shannon, na.rm = TRUE)),
+                        breaks = seq(.5,
+                                     max(spdf_data_monthly$shannon, na.rm = TRUE),
+                                     by = 0.25)) +
+  guides(color = guide_legend(), size = guide_legend()) +
+  labs(title = "Phytoplankton biodiversity",
+       subtitle = '{format(as_date(frame_time), "%Y-%m")}')
+
+animated_shannon = animate(
+      plot = animated_map_shannon, 
+      renderer = gifski_renderer(),
+      nframes = length(unique(spdf_data_monthly$monthYear))*params$frame_interpolations,
+      width = params$width, height = params$width*0.8, units = "px",
+      res = params$res,
+      fps = params$fps,
+      detail = params$detail,
+      end_pause = params$fps*10)
+
+main_gif = image_read(animated_shannon)
+
+logo = "logo_col_no_bg.png"
+logo = system.file("extdata", logo, package = "EMODnetBiologyMaps", mustWork = TRUE)
+logo = image_read(logo)
+logo = image_scale(logo, paste(0.09375*params$width))
+
+plot_logo_shannon = image_composite(main_gif, logo, gravity = "southeast", offset = paste0("+", round(0.3046875*params$width),"+", round(0.08789062*0.8*params$width)))
+
+image_write(plot_logo_shannon, file.path(animationsDir, "animation_shannon.gif"))
+
+gc() # Not pretty, but speeds up rendering
+```
+
+```{r elapsed_time_2, echo=FALSE}
+end_time = Sys.time()
+end_time - start_time
+```
+
+## Plot gamma richness
+
+Plot animation of changes in monthly gamma (whole region) species richness (n taxa) over time, exported as GIF.
+
+Exported as ../product/animations/animation_gamma_richness.gif
+
+```{r plot_gamma_richness, echo=FALSE}
+start_time = Sys.time()
+
+color_month = c("#529BB5", "#65AD97", "#92BC63", "#D0B440", "#E59036", "#E1562A", 
+                "#AE221D", "#521913", "#C6AED4", "#A16CAD", "#6C4F9E", "#4E79C4")
+
+scaleFactor_richness = max(gamma_diversity$n) / max(gamma_diversity$uniqueTaxa)
+
+animated_gamma_richness = gamma_diversity %>%
+  ggplot(aes(x = date)) +
+  geom_bar(aes(y = n/scaleFactor_richness, group=date, fill = month), stat = "identity", size = .1, color = "black", alpha = .5) + 
+  geom_line(aes(y = uniqueTaxa), color = "blue", linewidth = 1) +
+  scale_y_continuous(
+    name = "Unique taxa",
+    sec.axis = sec_axis(~.*scaleFactor_richness, name="Sample size (n)")) + 
+  scale_fill_gradientn(name="Month", colours = color_month,
+                       breaks=c(3,6,9,12),
+                       labels=c("Mar","Jun", "Sep", "Dec")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size=14, face="bold.italic"),
+        axis.title.y.left=element_text(color="blue"),
+        axis.text.y.left=element_text(color="blue")) +
+  xlab("Year") +
+  ggtitle("Gamma richness") +
+  guides(fill = guide_colorbar(reverse=T)) +
+  transition_reveal(daycount) 
+
+richness_gamma_rend = animate(
+      plot = animated_gamma_richness, 
+      renderer = gifski_renderer(),
+      nframes = length(unique(spdf_data_monthly$monthYear))*params$frame_interpolations,
+      width = params$width, height = params$width*0.4, units = "px",
+      res = params$res,
+      fps = params$fps,
+      detail = params$detail,
+      end_pause = params$fps*10)
+
+richness_gamma = image_read(richness_gamma_rend)
+
+image_write(richness_gamma, file.path(animationsDir, "animation_gamma_richness.gif"))
+
+gc() # Not pretty, but speeds up rendering
+```
+
+```{r elapsed_time_3, echo=FALSE}
+end_time = Sys.time()
+end_time - start_time
+```
+
+## Plot gamma diversity
+
+Plot animation of changes in monthly gamma (whole region) diversity (Shannon diversity index) over time, exported as GIF.
+
+Exported as ../product/animations/animation_gamma_diversity.gif
+
+```{r plot_gamma_diversity, echo=FALSE}
+start_time = Sys.time()
+
+scaleFactor_diversity = max(gamma_diversity$n) / max(gamma_diversity$shannon)
+
+animated_gamma_diversity = gamma_diversity %>%
+  ggplot(aes(x = date)) +
+  geom_bar(aes(y = n/scaleFactor_diversity, group=date, fill = month), stat = "identity", size = .1, color = "black", alpha = .5) + 
+  geom_line(aes(y = shannon), color = "darkgreen", linewidth = 1) +
+  scale_y_continuous(
+    name = "Shannon index",
+    sec.axis = sec_axis(~.*scaleFactor_diversity, name="Sample size (n)")) + 
+  scale_fill_gradientn(name="Month", colours = color_month,
+                       breaks=c(3,6,9,12),
+                       labels=c("Mar","Jun", "Sep", "Dec")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size=14, face="bold.italic"),
+        axis.title.y.left = element_text(color="darkgreen"),
+        axis.text.y.left = element_text(color="darkgreen")) +
+  xlab("Year") +
+  ggtitle("Gamma diversity") + 
+  guides(fill = guide_colorbar(reverse=T)) +
+  transition_reveal(daycount)
+
+shannon_gamma_rend = animate(
+      plot = animated_gamma_diversity, 
+      renderer = gifski_renderer(),
+      nframes = length(unique(spdf_data_monthly$monthYear))*params$frame_interpolations,
+      width = params$width, height = params$width*0.4, units = "px",
+      res = params$res,
+      fps = params$fps,
+      detail = params$detail,
+      end_pause = params$fps*10)
+
+shannon_gamma = image_read(shannon_gamma_rend)
+
+image_write(shannon_gamma, file.path(animationsDir, "animation_gamma_diversity.gif"))
+
+gc() # Not pretty, but speeds up rendering
+```
+
+```{r elapsed_time_4, echo=FALSE}
+end_time = Sys.time()
+end_time - start_time
+```
+
+## Joint map/plot animations
+
+Combined animation of alpha and gamma and maps and plots, exported as GIF and MP4.
+
+Exported as:
+../product/animations/animation_shannon_combined.gif
+../product/animations/animation_shannon_combined.mp4
+../product/animations/animation_richness_combined.gif
+../product/animations/animation_richness_combined.mp4
+
+```{r plot_maps, echo=FALSE}
+start_time = Sys.time()
+
+# Shannon only graphs
+
+shannon_plot = image_append(c(plot_logo_shannon[1], shannon_gamma[1]), stack = TRUE)
+
+n_frames_shannon = min(length(plot_logo_shannon), length(shannon_gamma))
+
+for(i in 2:n_frames_shannon) {
+  
+  combined_x = plot_logo_shannon[i]
+  combined_y = shannon_gamma[i]
+  
+  combined = image_append(c(combined_x, combined_y), stack = TRUE)
+  
+  shannon_plot = c(shannon_plot, combined)
+}
+
+image_write(shannon_plot, file.path(animationsDir, "animation_shannon_combined.gif"))
+
+gc() # Not pretty, but speeds up rendering
+
+image_write_video(shannon_plot, file.path(animationsDir, "animation_shannon_combined.mp4"), 
+                  framerate = params$fps)
+
+gc() # Not pretty, but speeds up rendering
+
+image_scale(shannon_plot, "x600")
+
+# Richness only graphs
+
+richness_plot = image_append(c(plot_logo_richness[1], richness_gamma[1]), stack = TRUE)
+
+n_frames_richness = min(length(plot_logo_richness), length(richness_gamma))
+
+for(i in 2:n_frames_richness) {
+  combined_x = plot_logo_richness[i]
+  
+  combined_y = richness_gamma[i]
+  
+  combined = image_append(c(combined_x, combined_y), stack = TRUE)
+  
+  richness_plot = c(richness_plot, combined)
+}
+
+image_write(richness_plot, file.path(animationsDir, "animation_richness_combined.gif"))
+
+gc() # Not pretty, but speeds up rendering
+
+image_write_video(richness_plot, file.path(animationsDir, "animation_richness_combined.mp4"), 
+                  framerate = params$fps)
+
+gc() # Not pretty, but speeds up rendering
+
+image_scale(richness_plot, "x600")
+```
+
+```{r elapsed_time_5, echo=FALSE}
+end_time = Sys.time()
+end_time - start_time
+```
+
+### Reproducibility
+
+```{r reproducibility}
+# Date time
+Sys.time()
+# Here we store the session info for this script
+sessioninfo::session_info()
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
