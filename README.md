@@ -10,7 +10,7 @@ As many biodiversity estimates are biased by sampling effort, caution must be ta
 
 ```
 EMODnet-Biology-phytoplankton-alpha-diversity/
-├── analysis
+├── analysis/
 ├── data/
 │   ├── derived_data/
 │   └── raw_data/
