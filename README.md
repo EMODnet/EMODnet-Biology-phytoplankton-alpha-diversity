@@ -48,7 +48,7 @@ http://geo.vliz.be/geoserver/Dataportal/ows?service=WFS&version=1.0.0&request=Ge
 
 We developed this product to assess how phytoplankton alpha diversity change over time in the greater Baltic sea area. Abundance data from the Swedish national phytoplankton monitoring are downloaded from [GBIF](https://www.gbif.org/) (data originating from [SHARKweb](https://sharkweb.smhi.se/)). Currently, only Swedish data are included as abundance is required for the calculations, and only between the time period between 2000-2022, as the sampling effort was more consistent during this time period (especially 2007-2022). Samples are rarified and Shannon diversity index and species richness (n taxa) are calculated for each monthly sample, and spatial data points are clustered together. Rarified monthly gamma diversity values are also calculated for the entire region, yet these values are highly biased by sampling effort (e.g. as there are less samples from the Gulf of Bothnia in wintertime). Maps with monthly alpha diversity values are produced using [EMODnetBiologyMaps](https://github.com/EMODnet/EMODnetBiologyMaps) R package (Fernández Bejarano & Schepers, 2020), and animated over time. Alpha diversity data are exported as NetCDF following Fernández-Bejarano (2022). 
 
-![]()
+![](animation_shannon.mp4)
 
 Preview of Shannon diversity index between 2000-2022.
 
