@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Biodiversity loss due to human activities is an increasing threat for marine ecosystems and the services we obtain for them. As biodiversity is directly related to the resilience of ecosystems to temporary disturbance, biodiversity monitoring is a vital task for areas subjected to conservation goals. Environmental factors often control the community composition and biodiversity of marine microplankton, such as the pronounced salinity gradient in the Baltic Sea (e.g. Hu et al. 2016). Time series data of biodiversity can therefore provide an indication of changes in community composition due to environmental stressors, such as climate change or eutrophication.
+Biodiversity loss due to human activities is an increasing threat for marine ecosystems and the services we obtain from them. As biodiversity is directly related to the resilience of ecosystems to temporary disturbance, biodiversity monitoring is a vital task for areas subjected to conservation goals. Environmental factors often control the community composition and biodiversity of marine microplankton, such as the pronounced salinity gradient in the Baltic Sea (e.g. Hu et al. 2016). Time series data of biodiversity can therefore provide an indication of changes in community composition due to environmental stressors, such as climate change or eutrophication.
 
 As many biodiversity estimates are biased by sampling effort, caution must be taken when interpreting alpha diversity from microscopy phytoplankton counts. By rarefaction and evenness estimation, these biases can be reduced, but not ignored.
 
