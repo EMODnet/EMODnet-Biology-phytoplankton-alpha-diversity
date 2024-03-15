@@ -79,11 +79,11 @@ Torstensson A, Sundqvist L, Lindh M (2023) Phytoplankton alpha diversity in the 
 
 Available to download in:
 
-[Integrated Marine Information System (IMIS)](https://www.vliz.be/imis?dasid=8221)
+[EMODnet catalogue](https://emodnet.ec.europa.eu/geonetwork/srv/eng/catalog.search#/metadata/d761592b5203e428ae8e9b11a63f1515f68f5865) 
+[VLIZ catalogue](https://www.vliz.be/imis?dasid=8221) 
+[EMODnet ERDDAP](https://erddap.emodnet.eu/erddap/files/biology_8221_a45b_17fb_beeb) 
+[EMODnet viewer](https://emodnet.ec.europa.eu/geoviewer/?layers=12982:1:1,12981:1:1&basemap=ebwbl&active=12982&bounds=-8108447.236064361,3082466.8149999995,11062488.39206436,11459766.29&filters=&projection=EPSG:3857) 
 
-and as zip:
-
-[Link to zip](/../../archive/refs/heads/main.zip)
 
 ### Authors
 
